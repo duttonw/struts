@@ -20,8 +20,11 @@ on:
   push:
     branches:
       - 'main'
+      - 'develop'
       - 'release/*'
       - 'support/*'
+  workflow_dispatch:
+  workflow_call:
 
 permissions: read-all
 
@@ -31,9 +34,10 @@ env:
 
 jobs:
   build:
-    name: Build and Test (JDK ${{ matrix.java }})${{ matrix.profile == '-Pjakartaee11' && ' with Jakarta EE 11' || matrix.profile }}
+    name: Build and Test (JDK ${{ matrix.java }})${{ matrix.profile == '-Pjakartaee11' && ' (Jakarta EE 11 + Spring 7)' || matrix.profile }}
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - java: '17'
@@ -44,6 +48,8 @@ jobs:
             profile: '-Pjakartaee11'
           - java: '25'
             profile: ''
+          - java: '25'
+            profile: '-Pjakartaee11'
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -53,5 +59,21 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.java }}
           cache: 'maven'
-      - name: Maven Verify on Java ${{ matrix.java }}${{ matrix.profile == '-Pjakartaee11' && ' (Jakarta EE 11)' || matrix.profile }}
+      - name: Maven Verify on Java ${{ matrix.java }}${{ matrix.profile == '-Pjakartaee11' && ' (Jakarta EE 11 + Spring 7)' || matrix.profile }}
         run: mvn -B -V -DskipAssembly verify ${{ matrix.profile }} --no-transfer-progress
+
+      - name: Test Summary ${{ matrix.java }} ${{ matrix.profile }}
+        uses: test-summary/action@v2.6
+        continue-on-error: true
+        if: always()
+        with:
+          paths: "**/*-reports/TEST-*.xml"
+          output: test-summary.md
+
+
+      - name: Upload test summary ${{ matrix.java }} ${{ matrix.profile }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-summary ${{ matrix.java }} ${{ matrix.profile }}
+          path: test-summary.md
+        if: always()
