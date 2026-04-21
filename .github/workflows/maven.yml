@@ -31,9 +31,10 @@ env:
 
 jobs:
   build:
-    name: Build and Test (JDK ${{ matrix.java }})${{ matrix.profile == '-Pjakartaee11' && ' with Jakarta EE 11' || matrix.profile }}
+    name: Build and Test (JDK ${{ matrix.java }})${{ matrix.profile == '-Pjakartaee11' && ' (Jakarta EE 11)' || matrix.profile }}
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - java: '17'
@@ -42,8 +43,14 @@ jobs:
             profile: ''
           - java: '21'
             profile: '-Pjakartaee11'
+          - java: '21'
+            profile: '-Pjakartaee11 -Pspring7'
           - java: '25'
             profile: ''
+          - java: '25'
+            profile: '-Pjakartaee11'
+          - java: '25'
+            profile: '-Pjakartaee11 -Pspring7'
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -55,3 +62,75 @@ jobs:
           cache: 'maven'
       - name: Maven Verify on Java ${{ matrix.java }}${{ matrix.profile == '-Pjakartaee11' && ' (Jakarta EE 11)' || matrix.profile }}
         run: mvn -B -V -DskipAssembly verify ${{ matrix.profile }} --no-transfer-progress
+
+      - name: Test Summary ${{ matrix.java }} ${{ matrix.profile }}
+        uses: test-summary/action@v2.6
+        continue-on-error: true
+        if: always()
+        with:
+          paths: "target/*-reports/TEST-*.xml"
+          output: test-summary.md
+
+
+      - name: Upload test summary ${{ matrix.java }} ${{ matrix.profile }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-summary ${{ matrix.java }} ${{ matrix.profile }}
+          path: test-summary.md
+        if: always()
+
+
+  owasp:
+    name: OWASP
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: 'maven'
+
+      - name: Cache NVD Database
+        id: cache-nvd
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: nvd-cache-${{ runner.os }}-owasp-${{ github.run_id }}
+          restore-keys: |
+            nvd-cache-${{ runner.os }}-owasp-
+            nvd-cache-${{ runner.os }}-
+
+      - name: OWASP Dependency check
+        run:  mvn -Powasp-nvd-mirror -Pdependency-update-only
+        env:
+          NVD_NIST_APIKEY: ${{ secrets.NVD_NIST_APIKEY}}
+
+      - name: Cache NVD Database
+        uses: actions/cache/save@v6
+        if: ${{ always() }}
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: nvd-cache-${{ runner.os }}-owasp-${{ github.run_id }}
+
+      - name: OWASP check (Without running tests)
+        run: mvn -B -V -DskipAssembly verify -Dmaven.test.skip=true -Pdependency-check --no-transfer-progress
+
+      - name: Upload Dependency Check reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-check
+          path: target/dependency-check*
+
+      - name: Add OWASP summary
+        if: always()
+        run: |
+          {
+            echo "## OWASP Dependency Check"
+            echo ""
+            echo "The HTML report has been uploaded as the **dependency-check** artifact."
+            echo "Download it from the Artifacts section of this workflow run."
+          } >> "$GITHUB_STEP_SUMMARY"
